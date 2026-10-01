@@ -157,7 +157,7 @@ Ainda não há arquivo de teste, magnet autorizado ou script `make-test-torrent`
 | ClickHouse                                  | Planejado; não implementado.                                                                   |
 | Sentry, OpenObserve, Prometheus e New Relic | Planejados para observabilidade; não implementados.                                            |
 | Cloudflare Workers                          | Planejado; não implementado.                                                                   |
-| GitHub Actions                              | O README antigo descrevia CI, mas nesta revisão não encontrei workflow em `.github/workflows`. |
+| GitHub Actions                              | Implementado em `.github/workflows/ci.yml` para API, web e validação do Compose básico.        |
 
 ## Arquitetura
 
