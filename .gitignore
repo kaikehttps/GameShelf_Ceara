@@ -1,0 +1,32 @@
+# Dependências e builds
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Cliente Prisma gerado (recriado por `npm run prisma:generate`)
+apps/api/src/generated/
+
+# Variáveis de ambiente (apenas o .env.example é versionado)
+.env
+.env.*
+!.env.example
+
+# Artefatos locais
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Relatórios locais de sincronização (adaptador de armazenamento local)
+var/
+
+# Cloudflare Workers
+.wrangler/
+.dev.vars
+
+# Go
+tools/catalog-validator/bin/

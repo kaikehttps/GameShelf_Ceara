@@ -1,0 +1,98 @@
+@import 'tailwindcss';
+
+/*
+ * Paleta do layout do GameShelf Ceará. Viram classes do Tailwind:
+ * bg-app-bg, bg-app-card, border-app-border, text-app-muted, text-app-accent...
+ */
+@theme {
+  --color-app-bg: #0d0f12;
+  --color-app-card: #15181d;
+  --color-app-surface: #1d2229;
+  --color-app-border: #2b313a;
+  --color-app-text: #f5f7fa;
+  --color-app-muted: #9aa4b2;
+  --color-app-accent: #35c990;
+  --color-app-danger: #f2706b;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--color-app-bg);
+    color: var(--color-app-text);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Foco visível para quem navega pelo teclado, na cor de destaque. */
+  :focus-visible {
+    outline: 2px solid var(--color-app-accent);
+    outline-offset: 2px;
+  }
+}
+
+/* Peças repetidas do layout, com as mesmas medidas do protótipo. */
+@layer components {
+  .btn-primary {
+    @apply inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-app-accent px-4 text-xs font-semibold text-app-bg shadow-sm transition-colors hover:bg-app-accent/90 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-secondary {
+    @apply inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-app-border bg-app-surface px-3 text-xs font-medium text-app-text transition-colors hover:bg-app-border disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .btn-danger {
+    @apply inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-app-border bg-app-bg px-3 text-xs font-medium text-app-danger transition-colors hover:border-app-danger/60 disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .chip {
+    @apply h-7 rounded border border-app-border bg-app-bg px-3 text-xs font-medium text-app-muted transition-colors hover:border-app-muted/40 hover:text-app-text;
+  }
+
+  .chip-active {
+    @apply h-7 rounded border border-app-accent/60 bg-app-surface px-3 text-xs font-medium text-app-accent;
+  }
+
+  .input {
+    @apply h-9 w-full rounded-md border border-app-border bg-app-card px-3 text-sm text-app-text placeholder-app-muted transition-colors focus:border-app-accent focus:outline-none;
+  }
+}
+
+/* Ícones Material Symbols: o nome do ícone é o texto do elemento. */
+.material-symbols-outlined {
+  font-variation-settings:
+    'FILL' 0,
+    'wght' 400,
+    'GRAD' 0,
+    'opsz' 20;
+  line-height: 1;
+  user-select: none;
+}
+
+.icon-filled {
+  font-variation-settings:
+    'FILL' 1,
+    'wght' 400,
+    'GRAD' 0,
+    'opsz' 20;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-app-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-app-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-app-accent);
+}

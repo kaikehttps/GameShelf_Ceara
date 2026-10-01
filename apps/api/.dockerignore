@@ -1,0 +1,11 @@
+# node_modules do Windows nunca entra na imagem: as dependências nativas
+# (Argon2, Prisma) precisam ser instaladas para Linux dentro do build.
+node_modules
+dist
+coverage
+src/generated
+.env
+.env.*
+*.log
+Dockerfile
+.dockerignore

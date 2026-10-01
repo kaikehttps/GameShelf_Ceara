@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: API · lint, tipos, testes e build
+    # Versão fixa: o ubuntu-latest migra para 26.04 entre out/nov de 2026.
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/api/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+      - run: npx prisma generate
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+
+      # Testcontainers sobe um PostgreSQL 18 descartável (o runner já tem Docker).
+      - run: npm run test:e2e
+
+      - run: npm run build
+
+      - name: Binário nativo do Argon2 disponível no Linux
+        run: node -e "import('@node-rs/argon2').then((m) => m.hash('ci')).then(() => console.log('argon2 ok'))"
+
+  web:
+    name: Web · lint, tipos, testes e build
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  compose:
+    name: Docker Compose · ambiente básico
+    runs-on: ubuntu-24.04
+    needs: api
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Prepara o .env com um segredo aleatório
+        run: |
+          cp .env.example .env
+          sed -i "s|^JWT_ACCESS_SECRET=.*|JWT_ACCESS_SECRET=$(openssl rand -hex 32)|" .env
+
+      - name: Valida o docker-compose.yml
+        run: docker compose config --quiet
+
+      - name: Sobe PostgreSQL, migrations e API
+        run: docker compose up -d --build
+
+      - name: Aguarda a API ficar pronta
+        run: curl --retry 30 --retry-delay 2 --retry-all-errors -fsS http://localhost:3000/health/ready
+
+      - name: Seed, login com o usuário demo e busca no catálogo
+        run: |
+          docker compose run --rm migrate npm run db:seed
+          curl -fsS -X POST http://localhost:3000/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"demo@gameshelf.dev","password":"demo-password-123"}' > /dev/null
+          echo "login ok"
+          # Confere, na imagem Alpine, as migrations da etapa 2 (pg_trgm, collation ICU) e o seed.
+          curl -fsS 'http://localhost:3000/games?q=hollow&sort=rating' | grep -q '"name":"Hollow Knight"'
+          echo "catálogo ok"
+
+      - name: Logs dos containers
+        if: failure()
+        run: docker compose logs
+
+      - name: Remove containers e volumes
+        if: always()
+        run: docker compose down -v

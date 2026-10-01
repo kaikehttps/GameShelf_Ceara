@@ -1,0 +1,311 @@
+// Schema do banco (fonte de verdade do GameShelf).
+// Convenção: nomes em camelCase no código e snake_case no PostgreSQL (@map / @@map).
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  /// Sempre em minúsculas (garantido pela API e por CHECK no banco).
+  email        String   @unique @db.VarChar(254)
+  displayName  String   @map("display_name") @db.VarChar(50)
+  bio          String?  @db.VarChar(280)
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  refreshTokens  RefreshToken[]
+  libraryEntries LibraryEntry[]
+  reviews        Review[]
+  downloads      Download[]
+
+  @@map("users")
+}
+
+enum RefreshTokenRevocationReason {
+  ROTATED
+  LOGOUT
+  REUSE_DETECTED
+
+  @@map("refresh_token_revocation_reason")
+}
+
+/// Cada linha é um refresh token. Tokens da mesma sessão compartilham o familyId.
+model RefreshToken {
+  id               String                        @id @default(uuid(7)) @db.Uuid
+  userId           String                        @map("user_id") @db.Uuid
+  familyId         String                        @map("family_id") @db.Uuid
+  /// SHA-256 (hex) do token. O valor bruto nunca é armazenado.
+  tokenHash        String                        @unique @map("token_hash") @db.Char(64)
+  /// Expiração por inatividade (renovada a cada rotação).
+  expiresAt        DateTime                      @map("expires_at") @db.Timestamptz(3)
+  /// Expiração absoluta da sessão (não muda nas rotações).
+  sessionExpiresAt DateTime                      @map("session_expires_at") @db.Timestamptz(3)
+  revokedAt        DateTime?                     @map("revoked_at") @db.Timestamptz(3)
+  revokedReason    RefreshTokenRevocationReason? @map("revoked_reason")
+  replacedById     String?                       @map("replaced_by_id") @db.Uuid
+  createdAt        DateTime                      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Catálogo
+// ---------------------------------------------------------------------------
+
+/// Um jogo do catálogo. É criado e atualizado pela sincronização com provedores externos.
+model Game {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  name        String    @db.VarChar(300)
+  description String?
+  /// Capa vertical (3:4). Sempre https (CHECK no banco): a URL vai direto para o <img> do frontend.
+  coverUrl    String?   @map("cover_url") @db.VarChar(2048)
+  /// Imagem larga para destaques. Também só https.
+  bannerUrl   String?   @map("banner_url") @db.VarChar(2048)
+  /// Opcional: alguns provedores não informam a data, ou o jogo ainda não saiu.
+  releaseDate DateTime? @map("release_date") @db.Date
+
+  /// Agregados das avaliações, mantidos por trigger no banco (veja a migration).
+  /// A API nunca escreve nesses campos.
+  ratingCount   Int      @default(0) @map("rating_count")
+  ratingSum     Int      @default(0) @map("rating_sum")
+  /// NULL enquanto o jogo não tiver avaliações.
+  ratingAverage Decimal? @map("rating_average") @db.Decimal(3, 2)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  externalIds     GameExternalId[]
+  genres          GameGenre[]
+  platforms       GamePlatform[]
+  libraryEntries  LibraryEntry[]
+  reviews         Review[]
+  downloadSources DownloadSource[]
+
+  @@index([name])
+  /// Índice de trigramas: acelera a busca por trecho do nome (ILIKE '%termo%').
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "games_name_trgm_idx")
+  @@index([releaseDate])
+  @@index([ratingAverage])
+  @@map("games")
+}
+
+enum CatalogProvider {
+  STEAM
+  EPIC
+  LAUNCHBOX
+
+  @@map("catalog_provider")
+}
+
+/// Identificador do jogo em um provedor externo. É a chave da sincronização:
+/// dois jogos só são o mesmo registro se tiverem o mesmo (provider, externalId),
+/// nunca por coincidência de nome.
+model GameExternalId {
+  id         String          @id @default(uuid(7)) @db.Uuid
+  gameId     String          @map("game_id") @db.Uuid
+  provider   CatalogProvider
+  externalId String          @map("external_id") @db.VarChar(100)
+  createdAt  DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, externalId])
+  /// Um jogo tem no máximo um identificador por provedor.
+  @@unique([gameId, provider])
+  @@map("game_external_ids")
+}
+
+model Genre {
+  id    Int         @id @default(autoincrement())
+  /// Identificador estável usado nos filtros da API (ex.: "rpg").
+  slug  String      @unique @db.VarChar(50)
+  name  String      @db.VarChar(50)
+  games GameGenre[]
+
+  @@map("genres")
+}
+
+model GameGenre {
+  gameId  String @map("game_id") @db.Uuid
+  genreId Int    @map("genre_id")
+
+  game  Game  @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  genre Genre @relation(fields: [genreId], references: [id], onDelete: Cascade)
+
+  @@id([gameId, genreId])
+  /// Atende o filtro "jogos do gênero X" (a chave primária começa pelo jogo).
+  @@index([genreId])
+  @@map("game_genres")
+}
+
+model Platform {
+  id    Int            @id @default(autoincrement())
+  slug  String         @unique @db.VarChar(50)
+  name  String         @db.VarChar(50)
+  games GamePlatform[]
+
+  @@map("platforms")
+}
+
+model GamePlatform {
+  gameId     String @map("game_id") @db.Uuid
+  platformId Int    @map("platform_id")
+
+  game     Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  platform Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  @@id([gameId, platformId])
+  @@index([platformId])
+  @@map("game_platforms")
+}
+
+// ---------------------------------------------------------------------------
+// Biblioteca pessoal e avaliações
+// ---------------------------------------------------------------------------
+
+enum LibraryStatus {
+  WANT_TO_PLAY
+  PLAYING
+  COMPLETED
+  ABANDONED
+
+  @@map("library_status")
+}
+
+model LibraryEntry {
+  id        String        @id @default(uuid(7)) @db.Uuid
+  userId    String        @map("user_id") @db.Uuid
+  gameId    String        @map("game_id") @db.Uuid
+  status    LibraryStatus
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  /// O mesmo jogo não entra duas vezes na biblioteca do mesmo usuário.
+  @@unique([userId, gameId])
+  @@index([userId, updatedAt])
+  @@index([gameId])
+  @@map("library_entries")
+}
+
+model Review {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  gameId    String   @map("game_id") @db.Uuid
+  /// Inteiro de 1 a 5 (CHECK no banco).
+  rating    Int      @db.SmallInt
+  comment   String?  @db.VarChar(1000)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  /// Uma avaliação por usuário e jogo.
+  @@unique([userId, gameId])
+  @@index([gameId, createdAt])
+  @@map("reviews")
+}
+
+// ---------------------------------------------------------------------------
+// Downloads via BitTorrent (qBittorrent controlado pela API)
+// ---------------------------------------------------------------------------
+
+enum DownloadSourceKind {
+  MAGNET
+  TORRENT_FILE
+
+  @@map("download_source_kind")
+}
+
+/// Torrent de distribuição autorizada (jogo open source, demo liberada, arquivo de teste
+/// nosso), cadastrado por um administrador pela linha de comando. O usuário só escolhe
+/// uma fonte pelo id; ele nunca envia links ou caminhos.
+model DownloadSource {
+  id                String             @id @default(uuid(7)) @db.Uuid
+  gameId            String             @map("game_id") @db.Uuid
+  name              String             @db.VarChar(200)
+  kind              DownloadSourceKind
+  /// MAGNET: o link magnet. TORRENT_FILE: o nome do arquivo .torrent cadastrado.
+  reference         String             @db.VarChar(4096)
+  /// Conteúdo do .torrent (só TORRENT_FILE). Fica no banco para não depender de uma pasta compartilhada.
+  torrentFile       Bytes?             @map("torrent_file")
+  /// Info hash v1 (SHA-1 em hex minúsculo), calculado no cadastro. É o id do torrent no qBittorrent.
+  infoHash          String             @unique @map("info_hash") @db.Char(40)
+  sizeBytes         BigInt?            @map("size_bytes")
+  /// De onde o torrent veio (site oficial do projeto, "gerado pelo GameShelf"...).
+  origin            String             @db.VarChar(500)
+  /// Licença ou autorização que permite distribuir o conteúdo.
+  license           String             @db.VarChar(200)
+  authorizationNote String?            @map("authorization_note") @db.VarChar(1000)
+  active            Boolean            @default(true)
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  game      Game       @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  downloads Download[]
+
+  @@index([gameId])
+  @@map("download_sources")
+}
+
+enum DownloadStatus {
+  QUEUED
+  METADATA
+  DOWNLOADING
+  PAUSED
+  CHECKING
+  COMPLETED
+  CANCELED
+  ERROR
+
+  @@map("download_status")
+}
+
+/// Uma operação de download de um usuário. Estatísticas em tempo real (velocidade, ETA)
+/// ficam no Redis/memória; aqui só entram mudanças de estado.
+model Download {
+  id              String         @id @default(uuid(7)) @db.Uuid
+  userId          String         @map("user_id") @db.Uuid
+  sourceId        String         @map("source_id") @db.Uuid
+  /// Id do torrent no cliente (copiado da fonte no início).
+  infoHash        String         @map("info_hash") @db.Char(40)
+  /// Igual a infoHash enquanto a tarefa existe no cliente; NULL quando não existe mais.
+  /// Com UNIQUE, o banco garante um único download ativo por torrent.
+  activeInfoHash  String?        @unique @map("active_info_hash") @db.Char(40)
+  status          DownloadStatus @default(QUEUED)
+  /// 0 a 1, gravado nas mudanças de estado.
+  progress        Float          @default(0)
+  downloadedBytes BigInt         @default(0) @map("downloaded_bytes")
+  totalBytes      BigInt?        @map("total_bytes")
+  /// Tentativas de adicionar ao cliente feitas pela reconciliação.
+  addAttempts     Int            @default(0) @map("add_attempts")
+  lastError       String?        @map("last_error") @db.VarChar(500)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  completedAt     DateTime?      @map("completed_at") @db.Timestamptz(3)
+  canceledAt      DateTime?      @map("canceled_at") @db.Timestamptz(3)
+  filesDeletedAt  DateTime?      @map("files_deleted_at") @db.Timestamptz(3)
+
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Restrict: o histórico de downloads impede apagar a fonte sem querer.
+  source DownloadSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@map("downloads")
+}
